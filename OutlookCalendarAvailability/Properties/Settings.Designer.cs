@@ -12,7 +12,7 @@ namespace OutlookCalendarAvailability.Properties {
     
     
     [global::System.Runtime.CompilerServices.CompilerGeneratedAttribute()]
-    [global::System.CodeDom.Compiler.GeneratedCodeAttribute("Microsoft.VisualStudio.Editors.SettingsDesigner.SettingsSingleFileGenerator", "17.0.0.0")]
+    [global::System.CodeDom.Compiler.GeneratedCodeAttribute("Microsoft.VisualStudio.Editors.SettingsDesigner.SettingsSingleFileGenerator", "17.14.0.0")]
     internal sealed partial class Settings : global::System.Configuration.ApplicationSettingsBase {
         
         private static Settings defaultInstance = ((Settings)(global::System.Configuration.ApplicationSettingsBase.Synchronized(new Settings())));
@@ -20,6 +20,102 @@ namespace OutlookCalendarAvailability.Properties {
         public static Settings Default {
             get {
                 return defaultInstance;
+            }
+        }
+        
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("Eastern")]
+        public string LastLocalTZ {
+            get {
+                return ((string)(this["LastLocalTZ"]));
+            }
+            set {
+                this["LastLocalTZ"] = value;
+            }
+        }
+        
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("Central")]
+        public string LastClientTZ {
+            get {
+                return ((string)(this["LastClientTZ"]));
+            }
+            set {
+                this["LastClientTZ"] = value;
+            }
+        }
+        
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("09:00")]
+        public string LastLocalStart {
+            get {
+                return ((string)(this["LastLocalStart"]));
+            }
+            set {
+                this["LastLocalStart"] = value;
+            }
+        }
+        
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("18:00")]
+        public string LastLocalEnd {
+            get {
+                return ((string)(this["LastLocalEnd"]));
+            }
+            set {
+                this["LastLocalEnd"] = value;
+            }
+        }
+        
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("09:00")]
+        public string LastClientStart {
+            get {
+                return ((string)(this["LastClientStart"]));
+            }
+            set {
+                this["LastClientStart"] = value;
+            }
+        }
+        
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("18:00")]
+        public string LastClientEnd {
+            get {
+                return ((string)(this["LastClientEnd"]));
+            }
+            set {
+                this["LastClientEnd"] = value;
+            }
+        }
+        
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("60")]
+        public int LastMeetingLength {
+            get {
+                return ((int)(this["LastMeetingLength"]));
+            }
+            set {
+                this["LastMeetingLength"] = value;
+            }
+        }
+        
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("")]
+        public string LastAttendees {
+            get {
+                return ((string)(this["LastAttendees"]));
+            }
+            set {
+                this["LastAttendees"] = value;
             }
         }
     }
