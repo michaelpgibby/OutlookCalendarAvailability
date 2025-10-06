@@ -33,51 +33,94 @@ namespace OutlookCalendarAvailability
         {
             try
             {
-                // Prompt user for necessary inputs
-                string localTimeZone = PromptUser("Enter your time zone (Pacific, Mountain, Central, Eastern):", storedLocalTimeZone);
-                string clientTimeZone = PromptUser("Enter the client time zone (Pacific, Mountain, Central, Eastern):", storedClientTimeZone);
+                using (var dlg = new MeetingInputForm())
+                {
+                    if (dlg.ShowDialog() != DialogResult.OK) return;
 
-                string startDate = PromptUser("Enter the start date (MM-DD-YYYY):", DateTime.Now.ToString("MM-dd-yyyy"));
-                string endDate = PromptUser("Enter the end date (MM-DD-YYYY):", DateTime.Now.AddDays(7).ToString("MM-dd-yyyy"));
+                    // Inputs from the single form
+                    var localTimeZone = dlg.LocalTimeZone;
+                    var clientTimeZone = dlg.ClientTimeZone;
 
-                string treatTentativeAsBusyInput = PromptUser("Should Tentative be treated as Busy? (Yes/No):", "Yes");
-                bool treatTentativeAsBusy = treatTentativeAsBusyInput.Equals("Yes", StringComparison.OrdinalIgnoreCase);
+                    var startDate = dlg.DateFrom.ToString("MM-dd-yyyy");
+                    var endDate = dlg.DateTo.ToString("MM-dd-yyyy");
 
-                string localStartTime = PromptUser("Enter your local start time (24-hour format, e.g. 09:00):", "09:00");
-                string localEndTime = PromptUser("Enter your local end time (24-hour format, e.g. 18:00):", "18:00");
+                    bool treatTentativeAsBusy = dlg.TreatTentativeAsBusy;
 
-                string clientStartTime = PromptUser("Enter the client start time (24-hour format, e.g. 09:00):", "09:00");
-                string clientEndTime = PromptUser("Enter the client end time (24-hour format, e.g. 18:00):", "18:00");
+                    string localStartTime = dlg.LocalStartHHmm;
+                    string localEndTime = dlg.LocalEndHHmm;
+                    string clientStartTime = dlg.ClientStartHHmm;
+                    string clientEndTime = dlg.ClientEndHHmm;
 
-                string emailsInput = PromptUser("Enter email addresses separated by commas:", "");
-                string[] emails = emailsInput.Split(',').Select(email => email.Trim()).ToArray();
+                    string[] emails = dlg.AttendeeEmails;
+                    int requiredMinutes = dlg.MeetingLengthMinutes;
 
-                // Ensure proper time format parsing
-                int localStart = ParseTime(localStartTime);
-                int localEnd = ParseTime(localEndTime);
-                int clientStart = ParseTime(clientStartTime);
-                int clientEnd = ParseTime(clientEndTime);
+                    // Parse times (HH:mm)
+                    int localStart = ParseTime(localStartTime);
+                    int localEnd = ParseTime(localEndTime);
+                    int clientStart = ParseTime(clientStartTime);
+                    int clientEnd = ParseTime(clientEndTime);
 
-                // Generate the availability chart
-                string availabilityChart = GenerateAvailabilityChart(
-                    startDate, endDate, emails,
-                    localTimeZone, clientTimeZone,
-                    localStart, localEnd,
-                    clientStart, clientEnd,
-                    treatTentativeAsBusy);
+                    // Generate chart + collect "not found" emails
+                    var availabilityChart = GenerateAvailabilityChart_Filtered(
+                        startDate, endDate, emails,
+                        localTimeZone, clientTimeZone,
+                        localStart, localEnd, clientStart, clientEnd,
+                        treatTentativeAsBusy,
+                        requiredMinutes,
+                        out var notFoundEmails // will be deduped below
+                    );
 
-                // Display the availability chart in a new email
-                Outlook.Application outlookApp = Globals.ThisAddIn.Application;
-                Outlook.MailItem mailItem = outlookApp.CreateItem(Outlook.OlItemType.olMailItem) as Outlook.MailItem;
-                mailItem.Subject = "Availability Chart";
-                mailItem.Body = availabilityChart;
-                mailItem.Display(false);
+                    // Deduplicate not-found list (case-insensitive)
+                    var notFoundDistinct = notFoundEmails
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .ToList();
+
+                    // Compute valid emails = input minus not-found
+                    var validEmails = emails
+                        .Where(e => !notFoundDistinct.Contains(e, StringComparer.OrdinalIgnoreCase))
+                        .ToArray();
+
+                    // If none valid, stop here (avoid misleading "free all day" email)
+                    if (validEmails.Length == 0)
+                    {
+                        MessageBox.Show(
+                            "No calendars were found for any of the addresses you entered.\r\n" +
+                            "Please check for typos and try again.",
+                            "No valid attendees",
+                            MessageBoxButtons.OK,
+                            MessageBoxIcon.Information
+                        );
+                        return;
+                    }
+
+                    // Build the final body:
+                    //  - line 1: Availability For: <valid emails>
+                    //  - line 2: Does not include (possible typos): <bad emails> (only if any)
+                    var header = new StringBuilder();
+                    header.AppendLine("Availability For: " + string.Join(", ", validEmails));
+                    if (notFoundDistinct.Count > 0)
+                    {
+                        header.AppendLine("Does not include (possible typos): " +
+                                          string.Join(", ", notFoundDistinct));
+                    }
+
+                    var finalBody = header.ToString() + "\r\n" + availabilityChart;
+
+                    // Show the result in a new mail
+                    Outlook.Application outlookApp = Globals.ThisAddIn.Application;
+                    Outlook.MailItem mailItem = outlookApp.CreateItem(Outlook.OlItemType.olMailItem) as Outlook.MailItem;
+                    mailItem.Subject = "Availability Chart";
+                    mailItem.Body = finalBody;
+                    mailItem.Display(false);
+                }
             }
             catch (Exception ex)
             {
                 MessageBox.Show($"An error occurred: {ex.Message}", "Error");
             }
         }
+
+
 
         // Parse time from 24-hour format (e.g. 09:00 -> 9, 17:00 -> 17)
         private int ParseTime(string time)
@@ -94,15 +137,40 @@ namespace OutlookCalendarAvailability
             }
         }
 
-        private string GenerateAvailabilityChart(
-        string startDate, string endDate, string[] emails,
-        string localTimeZone, string clientTimeZone,
-        int localStartTime, int localEndTime,
-        int clientStartTime, int clientEndTime,
-        bool treatTentativeAsBusy)
+
+        public void ComposeFeedbackEmail(string body)
         {
-            StringBuilder sb = new StringBuilder();
-            sb.AppendLine("Availability For: " + string.Join(", ", emails));
+            try
+            {
+                Outlook.Application app = Globals.ThisAddIn.Application;
+                Outlook.MailItem mail = app.CreateItem(Outlook.OlItemType.olMailItem) as Outlook.MailItem;
+                mail.To = "mgibby@hcg.com";
+                mail.Subject = "Outlook Availability Add-in - Help / Feedback";
+                mail.Body = body ?? "";
+                mail.Display(false);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Could not open Outlook compose window.\r\n" + ex.Message,
+                    "Help / Feedback", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+
+
+
+        private string GenerateAvailabilityChart_Filtered(
+    string startDate, string endDate, string[] emails,
+    string localTimeZone, string clientTimeZone,
+    int localStartTime, int localEndTime,
+    int clientStartTime, int clientEndTime,
+    bool treatTentativeAsBusy,
+    int requiredMinutes,
+    out List<string> notFoundEmails)
+        {
+            notFoundEmails = new List<string>();
+            var sb = new System.Text.StringBuilder();
+           
             sb.AppendLine();
 
             DateTime reportStartDate = DateTime.Parse(startDate);
@@ -110,37 +178,39 @@ namespace OutlookCalendarAvailability
 
             for (DateTime currentDate = reportStartDate; currentDate <= reportEndDate; currentDate = currentDate.AddDays(1))
             {
-                // Exclude weekends
                 if (currentDate.DayOfWeek == DayOfWeek.Saturday || currentDate.DayOfWeek == DayOfWeek.Sunday)
-                {
                     continue;
-                }
 
-                // Include the day of the week in the email
-                sb.AppendLine($"{currentDate:dddd MM-dd-yyyy}"); // 'dddd' gives the full name of the day
+                sb.AppendLine($"{currentDate:dddd MM-dd-yyyy}");
                 sb.AppendLine("--------------------");
 
-                // Generate time blocks for the day
-                var availableSlots = GenerateTimeBlocks(currentDate, localStartTime, localEndTime);
+                var availableSlots = GenerateTimeBlocks(currentDate, localStartTime, localEndTime, localTimeZone);
 
+
+                bool hadAnyData = false;
                 foreach (var email in emails)
                 {
-                    availableSlots = FilterAvailableSlots(email, currentDate, treatTentativeAsBusy, localTimeZone, clientTimeZone, clientStartTime, clientEndTime, availableSlots);
+                    availableSlots = FilterAvailableSlots_withNotFound(
+                        email, currentDate, treatTentativeAsBusy,
+                        localTimeZone, clientTimeZone,
+                        clientStartTime, clientEndTime,
+                        availableSlots, notFoundEmails, ref hadAnyData);
                 }
 
-                if (availableSlots.Any())
+
+                var groupedSlots = GroupConsecutiveTimeSlots(availableSlots)
+                    .Where(g => (g.SlotEnd - g.SlotStart).TotalMinutes >= requiredMinutes) // <-- length filter
+                    .ToList();
+
+                if (groupedSlots.Any())
                 {
-                    // Group and format time slots with both local and client time zones
-                    var groupedSlots = GroupConsecutiveTimeSlots(availableSlots);
                     foreach (var (SlotStart, SlotEnd) in groupedSlots)
                     {
-                        // Convert the time slot to both time zones
                         DateTime localSlotStart = TimeZoneInfo.ConvertTime(SlotStart, TimeZoneInfo.FindSystemTimeZoneById(GetTimeZoneId(localTimeZone)));
                         DateTime localSlotEnd = TimeZoneInfo.ConvertTime(SlotEnd, TimeZoneInfo.FindSystemTimeZoneById(GetTimeZoneId(localTimeZone)));
                         DateTime clientSlotStart = TimeZoneInfo.ConvertTime(SlotStart, TimeZoneInfo.FindSystemTimeZoneById(GetTimeZoneId(clientTimeZone)));
                         DateTime clientSlotEnd = TimeZoneInfo.ConvertTime(SlotEnd, TimeZoneInfo.FindSystemTimeZoneById(GetTimeZoneId(clientTimeZone)));
 
-                        // Format the output to include both local and client times
                         sb.AppendLine($" {localSlotStart:hh:mm tt} - {localSlotEnd:hh:mm tt} {localTimeZone} / {clientSlotStart:hh:mm tt} - {clientSlotEnd:hh:mm tt} {clientTimeZone}");
                     }
                 }
@@ -155,20 +225,27 @@ namespace OutlookCalendarAvailability
             return sb.ToString();
         }
 
-        private List<DateTime> GenerateTimeBlocks(DateTime date, int startHour, int endHour)
+
+        private List<DateTime> GenerateTimeBlocks(DateTime date, int startHour, int endHour, string selectedLocalTz)
         {
-            return Enumerable.Range(startHour, endHour - startHour)
-                             .SelectMany(hour => new[] {
-                                 new DateTime(date.Year, date.Month, date.Day, hour, 0, 0),
-                                 new DateTime(date.Year, date.Month, date.Day, hour, 30, 0)
-                             })
-                             .ToList();
+            var list = new List<DateTime>();
+            for (int h = startHour; h < endHour; h++)
+            {
+                list.Add(FromSelectedLocalTzToSystemLocal(date, h, 0, selectedLocalTz));
+                list.Add(FromSelectedLocalTzToSystemLocal(date, h, 30, selectedLocalTz));
+            }
+            return list;
         }
 
-        private List<DateTime> FilterAvailableSlots(
-      string email, DateTime date, bool treatTentativeAsBusy,
-      string localTimeZone, string clientTimeZone,
-      int clientStartTime, int clientEndTime, List<DateTime> availableSlots)
+
+
+        private List<DateTime> FilterAvailableSlots_withNotFound(
+    string email, DateTime date, bool treatTentativeAsBusy,
+    string localTimeZone, string clientTimeZone,
+    int clientStartTime, int clientEndTime,
+    List<DateTime> availableSlots,
+    List<string> notFoundEmails,
+    ref bool hadAnyData)
         {
             try
             {
@@ -179,22 +256,17 @@ namespace OutlookCalendarAvailability
                 if (recipient.Resolved)
                 {
                     string freeBusy = recipient.AddressEntry.GetExchangeUser()?.GetFreeBusy(date, 30, true);
-
                     if (!string.IsNullOrEmpty(freeBusy))
                     {
-                        List<DateTime> filteredSlots = new List<DateTime>();
+                        hadAnyData = true; // <-- mark that at least one address returned data
 
+                        List<DateTime> filteredSlots = new List<DateTime>();
                         foreach (var slot in availableSlots)
                         {
-                            // Determine the index for the free/busy string
                             int slotIndex = (slot.Hour * 60 + slot.Minute) / 30;
-
-                            // Check if the index is within bounds of the freeBusy string
                             if (slotIndex >= 0 && slotIndex < freeBusy.Length)
                             {
                                 char status = freeBusy[slotIndex];
-
-                                // Include slot only if it meets availability conditions
                                 if ((status == '0' || (!treatTentativeAsBusy && status == '1')) &&
                                     IsWithinWorkingHours(slot, localTimeZone, clientTimeZone, clientStartTime, clientEndTime))
                                 {
@@ -202,25 +274,63 @@ namespace OutlookCalendarAvailability
                                 }
                             }
                         }
-
                         return filteredSlots;
                     }
+                    else
+                    {
+                        AddUniqueIgnoreCase(notFoundEmails, email);
+                        return availableSlots;
+                    }
+                }
+                else
+                {
+                    AddUniqueIgnoreCase(notFoundEmails, email);
+                    return availableSlots;
                 }
             }
-            catch (Exception ex)
+            catch
             {
-                MessageBox.Show($"Error processing availability for {email}: {ex.Message}", "Error");
+                AddUniqueIgnoreCase(notFoundEmails, email);
+                return availableSlots;
             }
 
-            // Return an empty list if an error occurs or no data is available
-            return new List<DateTime>();
         }
 
-        private bool IsWithinWorkingHours(DateTime slot, string localTimeZone, string clientTimeZone, int clientStartTime, int clientEndTime)
+
+        private static void AddUniqueIgnoreCase(List<string> list, string email)
         {
-            // Logic to check if the slot is within working hours for local and client
-            return true;
+            if (!list.Exists(x => string.Equals(x, email, StringComparison.OrdinalIgnoreCase)))
+                list.Add(email);
         }
+
+
+        private bool IsWithinWorkingHours(
+      DateTime slot,
+      string localTimeZone, string clientTimeZone,
+      int clientStartTime, int clientEndTime)
+        {
+            try
+            {
+                // Convert slot (system-local) into each chosen TZ
+                var tzLocal = TimeZoneInfo.FindSystemTimeZoneById(GetTimeZoneId(localTimeZone));
+                var tzClient = TimeZoneInfo.FindSystemTimeZoneById(GetTimeZoneId(clientTimeZone));
+
+                var slotLocal = TimeZoneInfo.ConvertTime(slot, tzLocal);
+                var slotClient = TimeZoneInfo.ConvertTime(slot, tzClient);
+
+                // Check hours in both zones
+                bool inLocal = slotLocal.Hour >= 0; // we already restricted slots by local hours when creating them
+                bool inClient = slotClient.Hour >= clientStartTime && slotClient.Hour < clientEndTime;
+
+                return inLocal && inClient;
+            }
+            catch
+            {
+                // If conversion fails, be safe and exclude
+                return false;
+            }
+        }
+
 
         // Helper function to prompt for user input
         private string PromptUser(string prompt, string defaultValue)
@@ -232,6 +342,21 @@ namespace OutlookCalendarAvailability
             }
             return input;
         }
+
+
+        private DateTime FromSelectedLocalTzToSystemLocal(DateTime date, int hour, int minute, string selectedLocalTz)
+        {
+            // Build a wall-clock time IN the selected local TZ (unspecified), then interpret/convert to system local.
+            var tzLocal = TimeZoneInfo.FindSystemTimeZoneById(GetTimeZoneId(selectedLocalTz));
+            var unspecified = new DateTime(date.Year, date.Month, date.Day, hour, minute, 0, DateTimeKind.Unspecified);
+            // Treat 'unspecified' as time in tzLocal:
+            var dtoInSelected = new DateTimeOffset(unspecified, tzLocal.GetUtcOffset(unspecified));
+            // Convert to system local time
+            var dtoLocal = TimeZoneInfo.ConvertTime(dtoInSelected, TimeZoneInfo.Local);
+            return dtoLocal.LocalDateTime;
+        }
+
+
 
         private string GetTimeZoneId(string timeZone)
         {
@@ -245,6 +370,10 @@ namespace OutlookCalendarAvailability
                     return "Central Standard Time";
                 case "eastern":
                     return "Eastern Standard Time";
+                case "india":
+                case "ist":
+                case "india (ist)":
+                    return "India Standard Time";
                 default:
                     throw new ArgumentException("Unsupported time zone.");
             }
